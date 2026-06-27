@@ -459,6 +459,21 @@ impl RendezvousServer {
                 Some(rendezvous_message::Union::LocalAddr(la)) => {
                     self.handle_local_addr(la, addr, Some(socket)).await?;
                 }
+                Some(rendezvous_message::Union::TestNatRequest(tar)) => {
+                    let mut msg_out = RendezvousMessage::new();
+                    let mut res = TestNatResponse {
+                        port: addr.port() as _,
+                        ..Default::default()
+                    };
+                    if self.inner.serial > tar.serial {
+                        let mut cu = ConfigUpdate::new();
+                        cu.serial = self.inner.serial;
+                        cu.rendezvous_servers = (*self.rendezvous_servers).clone();
+                        res.cu = MessageField::from_option(Some(cu));
+                    }
+                    msg_out.set_test_nat_response(res);
+                    socket.send(&msg_out, addr).await?;
+                }
                 Some(rendezvous_message::Union::ConfigureUpdate(mut cu)) => {
                     if try_into_v4(addr).ip().is_loopback() && cu.serial > self.inner.serial {
                         let mut inner: Inner = (*self.inner).clone();
@@ -680,6 +695,9 @@ impl RendezvousServer {
             socket_addr: AddrMangle::encode(addr).into(),
             pk: self.get_pk(&phs.version, phs.id).await,
             relay_server: phs.relay_server.clone(),
+            is_udp:  socket.is_some(),
+            upnp_port: phs.upnp_port.clone(),
+            socket_addr_v6: phs.socket_addr_v6.clone(),
             ..Default::default()
         };
         if let Ok(t) = phs.nat_type.enum_value() {
@@ -714,6 +732,8 @@ impl RendezvousServer {
             socket_addr: la.local_addr.clone(),
             pk: self.get_pk(&la.version, la.id).await,
             relay_server: la.relay_server,
+            is_udp:  socket.is_some(),
+            socket_addr_v6: la.socket_addr_v6.clone(),
             ..Default::default()
         };
         p.set_is_local(true);
@@ -810,6 +830,7 @@ impl RendezvousServer {
                 msg_out.set_fetch_local_addr(FetchLocalAddr {
                     socket_addr,
                     relay_server,
+                    socket_addr_v6: ph.socket_addr_v6,
                     ..Default::default()
                 });
             } else {
@@ -823,6 +844,10 @@ impl RendezvousServer {
                     socket_addr,
                     nat_type: ph.nat_type,
                     relay_server,
+                    udp_port: ph.udp_port.clone(),
+                    force_relay: ph.force_relay.clone(),
+                    upnp_port: ph.upnp_port.clone(),
+                    socket_addr_v6: ph.socket_addr_v6.clone(),
                     ..Default::default()
                 });
             }
